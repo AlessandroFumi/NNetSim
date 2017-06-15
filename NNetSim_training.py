@@ -10,8 +10,9 @@ This file shall act just as a controller for the information flow:
 """
 import numpy as np
 import NNvars, NNfuncs, data_prep
-import shelve, os
-
+import matplotlib.pyplot as plt
+# Let's try to save the accuracies and subsequently plot them
+list_trainacc = []
 # Training
 print('TRAINING BEGINS:')
 for epoch_count in range(NNvars.numEpochs):
@@ -21,12 +22,7 @@ for epoch_count in range(NNvars.numEpochs):
     im_counter = 0
     im_correct = 0
     trainAccuracy = 0
-    previoustrainAccuracy = 0
     verificationAccuracy = 0
-    previousverificationAccuracy = 0
-    error_values = [0] * len(NNvars.delta_values)
-    sumWeightsChange = [0] * len(NNvars.weights)
-    
     # Cycling over the mnist dataset
     for data_in in data_prep.training_set:
         # Number of processed images
@@ -48,37 +44,25 @@ for epoch_count in range(NNvars.numEpochs):
         # Backpropagation
         NNvars.delta_values = NNfuncs.backpropagation(NNvars.weights, NNvars.neuron_values, NNvars.delta_values)
         
-        # Compute error values (MSE or xentropy)        
-        error_values = NNfuncs.total_error(NNvars.delta_values,error_values)
-            
-        if (np.mod(im_counter,NNvars.batchSize) == 0):
+        # Compute expected neuron values
+        NNvars.expected_values = [NNvars.neuron_values[i+1] + NNvars.delta_values[i]
+                                    for i in range(len(NNvars.delta_values))]
+
+        # Checking correctness    
+        if data_in[0] != np.argmax(NNvars.neuron_values[-1]):
             # Weight update
-            (NNvars.weights, NNvars.biases, weightsChange, biasesChange) = NNfuncs.weight_update(NNvars.weights,NNvars.biases,NNvars.neuron_values,NNvars.delta_values, NNvars.learningRate)
-            # Accumulate the average weight change per layer (summed all over the examples)
-            sumWeightsChange = [sumWeightsChange[i] + weightsChange[i] + biasesChange[i] for i in range(len(sumWeightsChange))]
-            # Reset neuron and delta values
-            (NNvars.neuron_values, NNvars.delta_values) = NNfuncs.reset_neurons(NNvars.neuron_values,NNvars.delta_values)            
+            (NNvars.weights, NNvars.biases) = NNfuncs.weight_update(NNvars.weights,NNvars.biases,NNvars.neuron_values,NNvars.delta_values, NNvars.learningRate)
+        # Reset neuron and delta values
+        (NNvars.neuron_values, NNvars.delta_values) = NNfuncs.reset_neurons(NNvars.neuron_values,NNvars.delta_values)            
         
-        
-        # Display relevant information
+        # Print useful information
         if np.mod(im_counter,NNvars.numCheckIterations) == 0:
-            # Display training accuracy
-            previoustrainAccuracy = trainAccuracy
-            trainAccuracy = np.multiply(100,np.divide(im_correct,im_counter))
-            info_msg = 'Accuracy: %f \t Errors:\t' % trainAccuracy
-            
-            # Display cost function for every delta layer
-            for i in range(len(error_values)):
-                info_msg += ('%f \t') % (np.divide(error_values[i],im_counter))
-            
-#            info_msg += '\nAverage weight change per neuron per example:'
-            # Display average weight update for every layer
-#            for i in range(len(sumWeightsChange)):
-#                info_msg += ('%f \t') % (np.divide(sumWeightsChange[i].mean(),im_counter))
-            print(info_msg)
-                    
+            trainAccuracy = NNfuncs.print_training_info(im_counter,im_correct)
+            list_trainacc.append(trainAccuracy)
+
     print('Epoch %d, accuracy on training set = %f %%' % (epoch_count+1,trainAccuracy))
-    
+#    for i in range(len(NNvars.weights)):
+#        plt.show(plt.pcolor(NNvars.weights[i]))
     # Learning rate decay
     NNvars.learningRate *= NNvars.learningRateDecay
     #Let's shuffle the training set
@@ -111,8 +95,37 @@ for epoch_count in range(NNvars.numEpochs):
     previoustrainAccuracy = verificationAccuracy
     verificationAccuracy = np.multiply(100,np.divide(im_correct,im_counter))
     
-    print('Accuracy on verification set = %f %% \n' 
+    print('Accuracy on verification set = %f %%' 
           % (np.multiply(100,np.divide(im_correct,im_counter))))
+
+    # Reset everything for test
+    im_counter = 0
+    im_correct = 0
     
+    # Test set
+    for data_in in data_prep.test_set:
+        # Number of processed images
+        im_counter += 1
+        
+        # Input layer
+        NNvars.neuron_values[0] = NNfuncs.input_layer(NNvars.neuron_values[0], data_in[1])
+        
+        # Forward inference
+        NNvars.neuron_values = NNfuncs.forward_inference(NNvars.weights,NNvars.biases,NNvars.neuron_values)
+
+        # Checking correctness    
+        if data_in[0] == np.argmax(NNvars.neuron_values[-1]):
+            im_correct += 1
+            
+        # Reset neuron and delta values
+        (NNvars.neuron_values, NNvars.delta_values) = NNfuncs.reset_neurons(NNvars.neuron_values,NNvars.delta_values)
+    
+    
+    # Display training accuracy
+    previoustrainAccuracy = verificationAccuracy
+    verificationAccuracy = np.multiply(100,np.divide(im_correct,im_counter))
+    
+    print('Accuracy on test set = %f %% \n' 
+          % (np.multiply(100,np.divide(im_correct,im_counter))))
     
 print('TRAINING ENDS')
