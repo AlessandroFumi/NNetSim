@@ -44,30 +44,63 @@ def fast3dconv(in_values,weights,sorting_indexes,reps,num_slidings):
 """LAYER CLASSES DEFINITION"""
 
 class layer(object):
-    
-    def __init__(self,in_shape,out_shape,weight_shape,bias_shape):
-        #   Common properties of every layers
-#        self.in_data = np.zeros(in_shape)
-#        self.in_err = np.zeros(in_shape)
-#        self.out_data = np.zeros(out_shape)
-#        self.out_err = np.zeros(out_shape)
-#        self.weights = np.random.randn(np.prod(weight_shape)).reshape(weight_shape)
-#        self.biases = np.random.randn(bias_shape)
 
-        # Maybe we should just save the weights, biases and dimensions
+    def __init__(self,in_shape,out_shape,weight_shape,bias_shape,stride=0,padding=0):
+        #   Additional properties for convolutional/maxpool layers
+        if stride > 0: # maxpool or conv layers 
+            # Padding
+            self.npad = ((0,0),(padding,padding),(padding,padding))
+            self.padded_in_shape = tuple(np.add(in_shape,np.sum(self.npad,axis = 1)))
+            outd = (self.padded_in_shape[-1]-weight_shape[-1])/stride+1
+            # Checking dimensional consistency
+            if outd % 1:
+                print('Not compatible dimensions for conv or maxpool layer./n',file=sys.stderr)
+            outd = int(outd)
+            
+            if len(weight_shape) <= 2:    #   Max Pool Layer
+                # Defining the output shape = (input depth, output height, output width)
+                out_shape = (in_shape[0],outd,outd)
+            else:   #   Conv Layer
+                # Defining the output shape = (num. filters, output height, output width)
+                out_shape = (weight_shape[0],outd,outd)
+                # Defining new filter shape = (num. filters, input depth, filter heights, filter width)
+                weight_shape = np.insert(weight_shape,1,in_shape[0])
+                # We now calculate very important class variables for convolutional layers
+                # which are the total number of slidings that the filter will perform and others
+                # these will be used to perform the customised 3d convolution
+                self.num_slidings, self.reps, self.sorting_indexes \
+                            = gen_indexes(self.padded_in_shape[-1],weight_shape[-1],stride)
+
+        #   Maybe we should just save the weights, biases and dimensions
         self.in_shape = in_shape
         self.out_shape = out_shape
         self.weight_shape = weight_shape
         self.bias_shape = bias_shape
         self.weights = np.random.randn(np.prod(weight_shape)).reshape(weight_shape)
         self.biases = np.random.randn(bias_shape)
+        #   Common properties of every layers
+        self.in_values = np.zeros(self.in_shape)
+        self.in_err = np.zeros(self.in_shape)
+        self.out_values = np.zeros(self.out_shape)
+        self.out_err = np.zeros(self.out_shape)
 
+    def pad_input(self,in_values):
+        # Padding
+        in_values = np.pad(in_values, self.npad, 'constant', constant_values = 0)
+        return in_values
+        
+    def layer_reset(self):
+        self.in_values = np.zeros(self.in_shape)
+        self.in_err = np.zeros(self.in_shape)
+        self.out_values = np.zeros(self.out_shape)
+        self.out_err = np.zeros(self.out_shape)
+        
 class fc_layer(layer):
     def __init__(self,in_shape,out_shape):
         # Input shape = (num. input neurons)
         # Output shape = (num. output neurons)
-        layer.__init__(self,in_shape,out_shape,(in_shape,out_shape),out_shape)
-        del self.npad
+        layer.__init__(self,np.prod(in_shape),np.prod(out_shape),
+                       (np.prod(in_shape),np.prod(out_shape)),np.prod(out_shape))
 
     def forward(self,in_values):
         # We use the dot product to calculate the net input of every neuron,
@@ -75,64 +108,47 @@ class fc_layer(layer):
         out_values = np.add(self.biases.ravel(),
                            np.dot(in_values.ravel(),self.weights))
         return out_values
-        
+
+    def backward(self,out_err):
+        in_err = np.dot(out_err, self.weights.transpose())
+        return in_err
+
 class conv_layer(layer):
     def __init__(self,in_shape,filter_shape,stride=1,padding=0):
-        # Input shape = (num. layers, input height, input width)
+        # Input shape = (input depth, input height, input width)
         # Filter shape = (num. filters, filter height, filter width)
+        #Applying parent init method
+        layer.__init__(self,in_shape,None,filter_shape,filter_shape[0],stride,padding)
         
-        outd = (in_shape[-1]+padding-filter_shape[-1])/stride+1
-        # Checking dimensional consistency
-        if outd % 1:
-            print('Not compatible dimensions for convolutional layer./n',file=sys.stderr)
-            exit(1)
-        outd = int(outd)
-        # Defining the output shape = (num. filters, output height, output width)
-        out_shape = (filter_shape[0],outd,outd)
-        # Defining new filter shape = (num. filters, num. layers, filter heights, filter width)
-        filter_shape = np.insert(filter_shape,1,in_shape[0])
-        
-        layer.__init__(self,in_shape,out_shape,filter_shape,filter_shape[0])
-        # Padding
-        self.npad = ((0,0),(padding,padding),(padding,padding))
-        # We now calculate very important class variables for convolutional layers
-        # which are the total number of slidings that the filter will perform and others
-        self.num_slidings, self.reps, self.sorting_indexes \
-                    = gen_indexes(in_shape[-1]+2*padding,filter_shape[-1],stride)
-
     def forward(self,in_values):
-        
         # Padding
-        in_values = np.pad(in_values, self.npad, 'constant', constant_values = 0)
-        
+        in_values = self.pad_input(in_values)
         out_values \
                 = fast3dconv(in_values,self.weights,self.sorting_indexes,
                              self.reps,self.num_slidings)
         return out_values
 
+    def backward(self,out_err):
+        weights = np.flip(self.weights,axis=-1)
+        weights = np.flip(weights,axis=-2)
+        # The backpropagation of a convolutional layer is still a convolution
+        in_err \
+                = fast3dconv(out_err,weights,self.sorting_indexes,
+                             self.reps,self.num_slidings)
+        return in_err
+
 class maxpool_layer(layer):
     
     def __init__(self,in_shape,stride=3,padding=0):
-        
-        outd = in_shape[-1]/stride
-        
-        # Checking dimensional consistency
-        if outd % 1:
-            print('Not compatible dimensions for convolutional layer./n',file=sys.stderr)
-            exit(1)
-
-        outd = int(outd)
-        # Defining the output shape
-        self.in_shape = in_shape
-        self.out_shape = (in_shape[0],outd,outd)
-        self.filter_shape = stride
+        # Input shape = (input depth, input height, input width)
+        # Filter shape = (stride)
+        layer.__init__(self,in_shape,None,(stride,stride),0,stride,padding)
+        # Now the boolean mask, which is important for backpropagation
         self.bool_mask = np.zeros(in_shape)
-        # Padding
-        self.npad = ((0,0),(padding,padding),(padding,padding))
-        
+
     def forward(self,in_values):
         # Padding
-        in_values = np.pad(in_values, self.npad, 'constant', constant_values = 0)
+        in_values = self.pad_input(in_values)
         # Divide the input volume slices by NxN using the filter dimension
         in_values = np.array(np.split(in_values,self.out_shape[-1],axis=-1))
         in_values = np.array(np.split(in_values,self.out_shape[-1],axis=-2))
@@ -148,7 +164,11 @@ class maxpool_layer(layer):
 class ReLU_layer(layer):
     
     def __init__(self,in_shape):
-        self.in_shape = in_shape
-        self.out_shape = in_shape
+        layer.__init__(self,in_shape,in_shape,None,None)
+        del self.weights, self.biases, self.weight_shape, self.bias_shape
         
+    def forward(self, in_values):
+        # Normalization + 'clip' routine that simulates the ReLU behaviour
+        out_values = in_values.clip(min=0)
+        return out_values
 """END OF LAYER CLASSES DEFINITION"""
