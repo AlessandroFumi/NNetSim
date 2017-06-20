@@ -129,47 +129,64 @@ def maxpool_layer_back(up_errors,down_errors,bool_mask):
     up_errors = fiveDtothreeD(up_errors)
     return up_errors
 
-""" CLASS DEFINITION """
-class layer():
+'''TEST METHOD FOR CONV LAYER, NOT USED SO FAR '''
+def test_conv(self):
+    test_input = np.array([1,2,0,2,1,
+                            2,1,0,1,0,
+                            1,0,0,1,2,
+                            1,0,0,2,0,
+                            0,1,0,0,2,
+                            2,2,1,1,2,
+                            1,1,1,1,1,
+                            1,1,1,0,1,
+                            2,2,2,0,0,
+                            2,0,1,1,2,
+                            2,1,1,2,2,
+                            0,0,0,1,0,
+                            0,2,2,2,1,
+                            1,0,2,0,2,
+                            2,2,2,2,2]).reshape(1,3,5,5)
+    test_weights = np.array([-1, 1, 0,
+                              0, 0, -1,
+                              0, 0, 1,
+                              0, 0, 1,
+                              1, 0, 1,
+                              1, 0, 1,
+                              1, -1, 0,
+                              -1, -1, 0,
+                              1, 0, 0,
+                              -1, 0, -1,
+                              0, 0, 0,
+                              1, 1, -1,
+                              1, 1, 1,
+                              0, 0, 0,
+                              0, 0, 1,
+                              1, -1, 0,
+                              0, -1, 1,
+                              -1, -1, -1]).reshape(2,3,3,3)
+
+    test_biases = np.array([1, 0])
+
+    test_output = np.array([[[ 1,  3,  0],
+                              [ 7,  1, -2],
+                              [ 0, -4, -6]],
+                             [[ 1,  1, -2],
+                              [ 5, -3,  1],
+                              [ 3,  0, -6]]]).reshape(1,2,3,3)
+
+    padding = 1
+    stride = 2
     
-    def __init__(self,layerType='FC',shapeWeights,stride=1):
-        
-        self.layerType = layerType
-        
-        if layerType == 'FC':
-            # Gaussian
-            self.weights = np.random.randn(shapeWeights)
-            # Uniform distribution
-            #self.weights = np.random.uniform(-1,1,np.prod(shapeWeights)).reshape(shapeWeights)
-            # Gaussian
-            self.biases = np.random.randn(shapeWeights[-1])
-            # Uniform distribution
-            #self.biases = np.random.uniform(-1,1,shapeOut)
-            self.forward = fc_layer
-            self.back = fc_layer_back
-            self.update = fc_layer_update
-        
-        elif layerType == 'CONV':
-            # Gaussian
-            self.weights = np.random.randn(shapeWeights)
-            # Uniform distribution
-            #self.weights = np.random.uniform(-1,1,shapeIn*shapeOut).reshape(shapeIn,shapeOut)
-            # Gaussian
-            self.biases = np.random.randn(shapeWeights[0])
-            # Uniform distribution
-            #self.biases = np.random.uniform(-1,1,shapeOut)
-            self.forward = conv_layer
-            self.back = conv_layer_back
-
-        elif layerType == 'ReLU':
-            self.forward = ReLU_layer
-            self.back = ReLU_layer_back
-
-        elif layerType == 'POOL':
-            self.forward = maxpool_layer
-            self.back = maxpool_layer_back
-            
-class NeuralNet(learningRate = 0.01, dataset = 'mnist'):
-    """The NeuralNet class shoud wrap everything concerning the training and testing of a neural network"""
-    def __init__(self):
-        self.layers = []
+    self.__init__(test_input.shape,test_weights.shape,stride,padding)
+    
+    self.W = test_weights
+    self.b = test_biases
+    self.W_shape = self.W.shape
+    
+    if (test_output == self.forward(test_input)).all():
+        print('Forward Convolution OK\n')
+    else: print('Forward Convolution not OK\n')
+    
+    print(self.backward(test_output))
+    
+    return
