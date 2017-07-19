@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.special import expit as logistic
-
 """FUNCTIONS FOR EFFICIENT 2D CONVOLUTION, im2col bases"""
 def get_im2col_indices(x_shape, field_height, field_width, padding=1, stride=1):
   # First figure out what the size of the output should be
@@ -52,12 +51,33 @@ def col2im_indices(cols, x_shape, field_height=3, field_width=3, padding=1,
   return x_padded[:, :, padding:-padding, padding:-padding]
 """FUNCTIONS FOR EFFICIENT 2D CONVOLUTION, im2col bases"""
 
+
+
 """ END OF BASIC BUILDING BLOCKS OF EVERY LAYER """
 class neurons(object):
-    def __init__(self,X_shape,out_shape, slope = 1):
+
+    def __init__(self,X_shape,out_shape,slope = 0.1):
+        """
+        This line defines the expected length of respectively len(X_shape) and len(out_shape).
+        So far we expect either conv-like layers (with len(shape) == 4) or fc-like layers
+        (len(shape) == 2). Also, if the X_shape is conv-like, also the out_shape must be and
+        the same holds for fc-like.
+        fc-like = 2, conv-like = 4
+        """
+        allowed_shapes = (2,2),(4,4)
         #   Maybe we should just save the weights, biases and dimensions
         self.X_shape = X_shape
         self.out_shape = out_shape
+        """
+        We can throw an error if we don't recognize the kind of neurons used in a certain layer,
+        this bit of code could change in the future if we decide to add more 'exotic'
+        layer types
+        """
+        if (len(self.X_shape),len(self.out_shape)) not in allowed_shapes:
+            raise ValueError(
+                    'The lenght of X_shape and out_shape must be either 4 (for conv_like layers) or 2 (for fully connected layers)'
+                    )
+      
         #   Initializing values and errors to 0
         self.X = np.zeros(self.X_shape)
         self.out = np.zeros(self.out_shape)
@@ -66,9 +86,19 @@ class neurons(object):
         self.slope = slope
 
     def loadvalues(self,X):
+        """
+        I decided to keep the class variables self.X and self.dout public, but I
+        strongly suggest that assignment is always done via these to methods, namely
+        self.loadvalues(values), self.loaderrors(errors).
+        These to methods check that the shape of the inputted values is consistent
+        with the preexising shape of the neurons, to preserve consistency
+        """
         self.X = X.reshape(self.X_shape)
     
     def loaderrors(self,dout):
+        """
+        Look at self.loadvalues(self,X) documentation
+        """
         self.dout = dout.reshape(self.out_shape)
 
     def pad(self):
@@ -83,7 +113,7 @@ class neurons(object):
 
 class synapses(object):
     
-    def __init__(self,W_shape,b_shape,learning_rate = 10):
+    def __init__(self,W_shape,b_shape,learning_rate = 1):
         #   Maybe we should just save the weights, biases and dimensions
         self.W_shape = W_shape
         self.b_shape = b_shape
@@ -94,11 +124,8 @@ class synapses(object):
         self.eta = learning_rate
         
     def update(self,dW,db):
-#        print('Weight sum: %f' % np.sum(self.W))
-#        print('Delta weight sum: %f' % np.sum(dW))
-        self.W += self.eta*dW
-        self.b += self.eta*db
-        
+        self.W += self.eta*dW / self.X_shape[0]
+        self.b += self.eta*db / self.X_shape[0]
 
     def randomize(self):
         self.W = np.random.randn(*self.W_shape)
@@ -133,44 +160,107 @@ class PWL_layer(neurons):
         return np.multiply(self.dout,(np.logical_and(self.X > 0.0, self.X < 1.0) ).astype(np.float))
 
 class sigmoid_layer(neurons):
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,slope = 0.1):
+        neurons.__init__(self,X_shape,X_shape,slope = slope)
         
     def forward(self):
-        self.out = logistic(self.X)
+        """
+        We imported the logistic function from scipy.special as it should be
+        one of the fastest implementations.
+        """
+        self.out = logistic(self.slope*self.X)
         return self.out
     
     def backward(self):
         return np.multiply(self.dout,self.out * (1 - self.out))
 
 class tanh_layer(neurons):
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,slope = 0.01):
+        neurons.__init__(self,X_shape,X_shape, slope = slope)
         
     def forward(self):
-        self.out = 0.5*np.tanh(self.X) + 0.5
+        self.out = 0.5*np.tanh(self.slope*self.X) + 0.5
         return self.out
     
     def backward(self):
         return np.multiply(self.dout,(1 - np.power(self.out,2)))
 
 class norm_layer(neurons):
+    """
+    This layer differs from the fullnorm_layer because it justs scale the
+    values with respect to the highest one. I think this makes strictly sense
+    just in case all values are positive.
+    """
     def __init__(self,X_shape):
         neurons.__init__(self,X_shape,X_shape)
+        # Now the boolean mask, which is important for backpropagation
+        self.bool_mask = np.zeros(X_shape)
     
     def forward(self):
+        """
+        We save the position of the maximum in the variable self.boolean mask
+        to correctly use the chain rule in the backward pass.
+        So far we're assuming that we use this layer just for fc-like inputs.
+        """
+        self.max = np.max(self.X,axis = -1)[...,None]
+        self.bool_mask = (self.X == self.max).astype(np.int)
         return np.divide(
                     self.X,
-                    np.max(self.X,axis = -1)[...,None]
+                    self.max
                     )
     
     def backward(self):
         # This implementation is not correct, as we should take into account the compound derivative
         # but this layer is supposed to be used just as input, so the backward is not important
-        return np.multiply(
-                        self.dout,
-                        np.max(self.X,axis = -1)[...,None]
-                        )
+#        return np.divide(
+#                        self.dout,
+#                        np.max(self.X,axis = -1)[...,None]
+#                        )
+        """
+        The correct implementation should look something like this:
+        I will do the matrix notation later
+        """
+        # This thing returns 0 error for the maximum
+#        return ((1 - self.bool_mask) * self.dout) / self.max \
+#                - self.bool_mask / np.power(self.max,2) * (self.X * self.dout * (1-self.bool_mask))
+        # This returns the same as the one above exept for the maximum
+        return ( self.dout / self.max ) * ((1 - self.bool_mask) + self.bool_mask * (np.sum(self.out,axis = -1) - 1)[...,None])
+        
+class fullnorm_layer(neurons):
+    """
+    The function of this layer is to normalize every image by zeroing (subtracting the average value)
+    and then scaling so that the maximum value is 1. This layer should be flexible enough to work seamlessy
+    with convolutional-like inputs (shape = (batch_size, depth, height, width)) and fully connected-like
+    inputs (shape = (batch_size, width)).
+    To achieve this we simply define self.forward() as a pointer to either self.forward_conv() (for len(X_shape) == 4)
+    or self.forward_fc() (for len(X_shape) == 2)
+    """
+    def __init__(self,X_shape):
+        neurons.__init__(self,X_shape,X_shape)
+        """
+        If we see that using this layer for conv-like inputs does not make sense, we'll just switch to the
+        fc-like implementation.
+        """
+        if len(X_shape) == 4:
+            self.forward = self.forward_conv
+        else:
+            self.forward = self.forward_fc
+
+    def forward_conv(self):
+        X = self.X.astype(float)
+        X -= np.average(X.reshape(self.X_shape[0],self.X_shape[1],-1),axis = -1)[...,None,None]
+        X /= np.max(X.reshape(self.X_shape[0],self.X_shape[1],-1),axis = -1)[...,None,None]
+        return X
+    
+    def forward_fc(self):
+        X = self.X.astype(float)
+        X -= np.average(X,axis = -1)[...,None]
+        X /= np.max(X,axis = -1)[...,None]
+        return X
+    
+    def backward(self):
+        return self.dout
+
 
 class softmax_layer(neurons):
     def __init__(self,X_shape):
@@ -191,7 +281,7 @@ class softmax_layer(neurons):
 
 
 class fc_layer(neurons,synapses):
-    def __init__(self,X_shape,out_shape):
+    def __init__(self,X_shape,out_shape,learning_rate = 0.1):
         # Input shape = (num. input neurons)
         # Output shape = (num. output neurons)
         # Number of images per batch = (n_images)
@@ -200,7 +290,7 @@ class fc_layer(neurons,synapses):
         W_shape = (X_shape[-1],out_shape[-1])
         # Actual initialization
         neurons.__init__(self,X_shape,out_shape)
-        synapses.__init__(self,W_shape,out_shape[-1])
+        synapses.__init__(self,W_shape,out_shape[-1],learning_rate = learning_rate)
 
     def forward(self):
         # We use the dot product to calculate the net input of every neuron,
@@ -213,7 +303,7 @@ class fc_layer(neurons,synapses):
         return np.dot(self.dout, self.W.transpose())
 
 class conv_layer(neurons,synapses):
-    def __init__(self,X_shape,W_shape,stride=1,padding=0):
+    def __init__(self,X_shape,W_shape,stride=1,padding=0,learning_rate = 0.1):
         # Input shape = (input depth, input height, input width)
         # Filter shape = (num. filters, filter height, filter width)
         assert(len(W_shape)==3)
@@ -232,7 +322,7 @@ class conv_layer(neurons,synapses):
         W_shape = np.insert(W_shape,1,X_shape[1])
         #Applying parent init method
         neurons.__init__(self,X_shape,out_shape)
-        synapses.__init__(self,W_shape,W_shape[0])
+        synapses.__init__(self,W_shape,W_shape[0],learning_rate = learning_rate)
 
     def forward(self):
         n_filters, d_filter, h_filter, w_filter = self.W.shape
@@ -310,94 +400,6 @@ class maxpool_layer(neurons):
 """END OF LAYER CLASSES DEFINITION"""
 
 """NEURALNET CLASS DEFINITION"""
-#class NeuralNet(object):
-#    # Probably the best way to parse this guy is:
-#        #   1) Interactive session (that saves a dictioary)
-#        #   2) Python dictionary
-#    def __init__(self,kwargs):
-#        for key, value in kwargs.items():
-#            setattr(self, key, value)
-#        # Checking correctness of parameters:
-#        assert (len(self.layerList) == len(self.layerParamList))
-#        self.layers = []
-#        self.layerCount = 0
-#        
-#        """ This part of code can be improved """
-#        for e,i in enumerate(self.layerList):
-#            if e == 0:
-#                self.layers.append(self.layerList[e](*self.layerParamList[e]))
-#            else:
-#                self.layers.append(self.layerList[e](self.layers[e-1].out_shape,
-#                                   *self.layerParamList[e]))
-#            print('Layer %d successfully created.' % e)
-#            self.layerCount += self.layerCount
-#        """ End of part of code can be improved """
-#        #   Additional (unnecessary) information
-#        self.input_layer= self.layers[0]
-#        self.batch_size = self.input_layer.X_shape[0]
-#        self.output_layer = self.layers[-1]
-#        self.num_classes = self.output_layer.out_shape[-1]
-#
-#    def gen_gtruth(self,labels):
-#        # This might be modified for more complex encodings
-#        assert ((labels < self.num_classes).all())
-#        assert ( np.size(labels, axis = 0) == self.batch_size)
-#
-#        gtruth = np.zeros((self.batch_size,self.num_classes))
-#        gtruth[np.arange(self.batch_size),labels] = 1
-#        return gtruth
-#
-#    def train(self,training_set):
-#        # Some checking
-##        assert ( np.max(labels) + 1 == self.num_classes )
-#        # Initializing and checking some variables
-#        batch_size = self.batch_size
-#        samples = 0
-#        correct = 0
-#        assert (len(training_set) % batch_size == 0)
-#        # Creating batches (don't know how it will work when batch_size = 1)
-#        batches = [training_set[i:i + self.batch_size] for i in range(0, len(training_set), self.batch_size)]
-#        
-#        # Actual computation
-#        for i in batches:
-#            labels, i = zip(*i)
-#            labels = np.array(labels)
-#            i = np.array(i)
-#            
-#            for j in self.layers:
-#                j.loadvalues(i)
-#                i = j.forward()
-#
-#            # Checking correctness: checking argmax of last neurons vs number of classes
-#            # and then summing all the times our neurons were correct
-#            samples += self.batch_size
-#            correct += np.sum(labels == np.argmax(i,axis = -1))
-#            # Computing output error
-#            i = self.gen_gtruth(labels) - i
-##            print('Cost function: %f' % np.sum(np.power(self.gen_gtruth(labels[e]) - i,2)))
-#
-#            for j in reversed(self.layers):
-#                j.loaderrors(i)
-#                i = j.backward()
-#            
-#            #Print
-#            
-#            print('Accuracy = %f' % float(correct*100/samples))
-#            
-#        return 0
-#        
-#    def verification(self):
-#        pass
-#        
-#    def evaluate(self,test_set):
-#        pass
-#    
-#    def saveStatus(self):
-#        pass
-#    
-#    def loadStatus(self):
-#        pass
-#    
 class NeuralNet(object):
     '''
     This class is a supposedly easy to use wrapper that should control
@@ -406,7 +408,12 @@ class NeuralNet(object):
     gradient between layers. The layer object are contained into the list:
     self.layers.
     '''
-    def __init__(self,**kwargs):
+    def __init__(self,lossfunc = 'MSE',**kwargs):
+        """
+        The following line prevents every layer to print out all the elements of 
+        self.X, self.dout and self.W, which sometimes can be as many as several thousands
+        """
+        np.set_printoptions(precision = 3,threshold = 10)
         '''
         So far I don't think we need something specific for the neural net class
         so we'll just leave the classic dictionary initialization that should
@@ -430,53 +437,48 @@ class NeuralNet(object):
             
             The two methods are equivalent.
         '''
+        if lossfunc == 'MSE':
+            self.error = self.error_MSE
+        elif lossfunc == 'xentropy':
+            self.error = self.error_xentropy
+        else:
+            raise ValueError ('The parameter lossfunc must be either MSE or xentropy')
+
         if kwargs:
             for key, value in kwargs.items():
                 setattr(self, key, value)
         '''
         We initialize the layer list, as we'll just use the .append and .pop
-        methods to modify it during the execution of the code
+        methods to modify it during the execution of the code.
         '''
         self.layers = []
 
-    def add_layer(self, layerobj, *args):
-        print(*args)
-        if args:
-            '''
-            If args means that the user specified the layer (layerobj) and the 
-            arguments separately. This is a 'safer' automatic procedure to add a 
-            layer, as the code will automatically make it consistent with the 
-            already added layers. The code might look something like this:
-        
-                x = NeuralNet()        # So far the init method does not require args
-                x.addlayer( fc_layer, (10,784) , (10,))
-            '''
-            if not self.layers:
-                self.layers.append( layerobj ( *args ) )
-            else:
-                self.layers.append( layerobj ( self.layers[-1].out_shape, *args ) )
-
+    def add_layer(self, layerobj, **kwargs):
+        '''
+        If args means that the user specified the layer (layerobj) and the 
+        arguments separately. This is a 'safer' automatic procedure to add a 
+        layer, as the code will automatically make it consistent with the 
+        already added layers. The code might look something like this:
+    
+            x = NeuralNet()        # So far the init method does not require args
+            x.addlayer( fc_layer, (10,784) , (10,))
+        '''
+        if not self.layers:
+            self.layers.append( layerobj ( **kwargs ) )
         else:
-            '''
-            iF the user did not specify 'args' separately, it means that layerobj
-            is already a layer class parsed with the proper input parameters, 
-            for example, in this case the code could look something like this:
-                
-                x = NeuralNet()        # So far the init method does not require args
-                x.addlayer( fc_layer( (10,784) , (10,) ) )
-                
-            This can be a little more risky
-            '''
-            self.layers.append( layerobj )
-        
+            self.layers.append( layerobj ( X_shape = self.layers[-1].out_shape, **kwargs ) )
+            
         '''
         To print out the name of the layer we could have directly used layerobj.__name__ in
         the first case of the if statement, to be more versatile we will call the 
         layerobj().__class__.__name__ method instead (which is more general)
         '''
+        
         print('Successfully created %s as layer number %d' % (self.layers[-1].__class__.__name__, len(self.layers)))
-#        print('Parameters for layer %d are: \n Input_shape = %s \n Output_shape = %s \n' 
-#              % ( len(self.layers), self.layers[-1].X_shape, self.layers[-1].out_shape ) )
+        print('Parameters for layer %d are: ', len(self.layers))
+        for key,value in self.layers[-1].__dict__.items():
+            print('%s = ' % key)
+            print(value)
 
     def remove_layer(self, indexes):
         for i in indexes:
@@ -504,19 +506,6 @@ class NeuralNet(object):
             NETWORK AFTER REMOVAL OF HIDDEN LAYER:
             FC (784,250) --> FC (250,10)
         '''
-        
-    def gen_gtruth(self,labels):
-        '''
-        Assuming one-hot encoding in the output layer, and labels in the form
-        of a vector of integer numbers (with values ranging from 0 to N_class - 1)
-        
-        '''
-        assert ((labels < self.num_classes).all())
-        assert ( np.size(labels, axis = 0) == self.batch_size)
-
-        gtruth = np.zeros((self.batch_size,self.num_classes))
-        gtruth[np.arange(self.batch_size),labels] = 1
-        return gtruth
         
     def train(self,training_set):
         '''
@@ -550,26 +539,43 @@ class NeuralNet(object):
             samples += self.batch_size
             correct += np.sum(labels == np.argmax(i,axis = -1))
             # Computing output error
-            i = self.gen_gtruth(labels) - i
-#            print('Cost function: %f' % np.sum(np.power(self.gen_gtruth(labels[e]) - i,2)))
+#            print(self.gen_gtruth(labels))
+#            print(i)
+            
+            i = self.error(i,labels)
+#            print('Cost Function = %f' % self.loss, end = '\r')
 
             for j in reversed(self.layers):
                 j.loaderrors(i)
                 i = j.backward()
             
-            #Print
+        #Print
+        print('Accuracy = {:3.2f}\r'.format(float(correct*100/samples)))
             
-            print('Accuracy = %f' % float(correct*100/samples))
-
-    def verification(self):
-        pass
+    def gen_gtruth(self,labels):
+        '''
+        Assuming one-hot encoding in the output layer, and labels in the form
+        of a vector of integer numbers (with values ranging from 0 to N_class - 1)
         
-    def evaluate(self,test_set):
-        pass
+        '''
+        assert ((labels < self.num_classes).all())
+        assert ( np.size(labels, axis = 0) == self.batch_size)
+
+        gtruth = np.zeros((self.batch_size,self.num_classes))
+        gtruth[np.arange(self.batch_size),labels] = 1
+        return gtruth
+
+    def error_MSE(self,out,labels):
+        dout = self.gen_gtruth(labels) - out
+        self.loss = 0.5*np.sum(np.power(dout,2)) / self.batch_size
+        return dout
+        
+    def error_xentropy(self,out,labels):
+        dout =  self.gen_gtruth(labels)*np.log(out) \
+                - (1 - self.gen_gtruth(labels))*np.log(1 - out)
+        self.loss = 0.5*np.sum(np.pow(dout,2)) / self.batch_size
+        return dout
     
-    def saveStatus(self):
-        pass
-    
-    def loadStatus(self):
+    def gradcheck(self):
         pass
 """END OF NEURALNET CLASS DEFINITION"""
