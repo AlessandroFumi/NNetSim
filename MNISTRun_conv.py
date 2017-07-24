@@ -10,7 +10,7 @@ import mnist
 
 full_set = [i for i in mnist.read_mnist('training')]
 np.random.shuffle(full_set)
-full_set = full_set[:10000]
+full_set = full_set[:5000]
 numEpochs = 10
 # Extracting labels and images, assuming that the training set is a list of tuples
 
@@ -23,8 +23,9 @@ x = nnet.NeuralNet()
 """
 We add the layers one by one
 """
-x.add_layer(nnet.norm_layer, X_shape = (10,784))
+x.add_layer(nnet.norm_layer, X_shape = (len(full_set),784))
 x.add_layer(nnet.fc_layer, out_shape = (10), learning_rate = 10)
+x.add_layer(nnet.cent_layer)
 x.add_layer(nnet.sigmoid_layer, slope = 0.1)
 
 for i in range(numEpochs):

@@ -56,7 +56,7 @@ def col2im_indices(cols, x_shape, field_height=3, field_width=3, padding=1,
 """ END OF BASIC BUILDING BLOCKS OF EVERY LAYER """
 class neurons(object):
 
-    def __init__(self,X_shape,out_shape,slope = 0.1):
+    def __init__(self,X_shape,out_shape,lossfunc = 'MSE',slope = 0.1):
         """
         This line defines the expected length of respectively len(X_shape) and len(out_shape).
         So far we expect either conv-like layers (with len(shape) == 4) or fc-like layers
@@ -84,6 +84,19 @@ class neurons(object):
         self.dout = np.zeros(self.out_shape)
         #   Next line is used for activation neurons, not implemented yet
         self.slope = slope
+        """
+        We assume that we'll call all the error methods error_<kindoferror>
+        """
+        self.error = getattr(self,'error_' + lossfunc)
+        
+    def __str__(self):
+        """
+        Let's generate a complete string with the layer type and all the parameters
+        """
+        string = '%s with parameters:\n' % self.__class__.__name__
+        for key,value in self.__dict__.items():
+            string = '%s%s = \n%r\n'% (string,key,value)
+        return string
 
     def loadvalues(self,X):
         """
@@ -102,6 +115,9 @@ class neurons(object):
         self.dout = dout.reshape(self.out_shape)
 
     def pad(self):
+        """
+        For conv-like neural layers we may have to pad the inputs in this way
+        """
         # Padding
         npad = ((0,0),(0,0),(self.padding,self.padding),(self.padding,self.padding))
         return np.pad(self.X, npad, 'constant', constant_values = 0)
@@ -110,6 +126,30 @@ class neurons(object):
         self.X.fill(0)
         self.out.fill(0)
         self.dout.fill(0)
+        
+    """
+    I decided to puy the error calculation method in the layer, so that we can obtain
+    the error for every layer
+    """
+    def error_MSE(self,gtruth):
+        self.dout = gtruth - self.out
+        self.loss = 0.5*np.average(np.sum(np.power(self.dout,2),axis = -1))
+        return self.dout
+        
+    def error_xentropy(self,gtruth):
+        """
+        I'm not totally sure that the derivatives in this case are computed correctly,
+        but in any case to avoid dividing by zero we clip the output to avoid zeroes and
+        ones
+        """
+        out_clipped = self.out.clip(min=1e-12,max=1-1e-12)
+        self.loss =  -  np.average(np.sum(gtruth*np.log(out_clipped) + (1 - gtruth)*np.log(1 - out_clipped),axis = -1))
+        self.dout = - (1 - gtruth) / (1 - out_clipped) + gtruth / out_clipped
+        return self.dout
+    
+    def gradcheck(self):
+        pass
+    
 
 class synapses(object):
     
@@ -140,28 +180,30 @@ class synapses(object):
 
 """LAYER CLASSES DEFINITION"""
 class ReLU_layer(neurons):
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,**kwargs)
         
     def forward(self):
-        return self.X.clip(min=0)
+        self.out = self.X.clip(min=0)
+        return 
     
     def backward(self):
         return np.multiply(self.dout,(self.X > 0.0).astype(np.float))
 
 class PWL_layer(neurons):
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,**kwargs)
         
     def forward(self):
-        return self.X.clip(min=0,max=1)
+        self.out = self.X.clip(min=0,max=1)
+        return  self.out
     
     def backward(self):
         return np.multiply(self.dout,(np.logical_and(self.X > 0.0, self.X < 1.0) ).astype(np.float))
 
 class sigmoid_layer(neurons):
-    def __init__(self,X_shape,slope = 0.1):
-        neurons.__init__(self,X_shape,X_shape,slope = slope)
+    def __init__(self,X_shape,slope = 0.1,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,slope = slope,**kwargs)
         
     def forward(self):
         """
@@ -175,8 +217,8 @@ class sigmoid_layer(neurons):
         return np.multiply(self.dout,self.out * (1 - self.out))
 
 class tanh_layer(neurons):
-    def __init__(self,X_shape,slope = 0.01):
-        neurons.__init__(self,X_shape,X_shape, slope = slope)
+    def __init__(self,X_shape,slope = 0.01,**kwargs):
+        neurons.__init__(self,X_shape,X_shape, slope = slope,**kwargs)
         
     def forward(self):
         self.out = 0.5*np.tanh(self.slope*self.X) + 0.5
@@ -191,8 +233,8 @@ class norm_layer(neurons):
     values with respect to the highest one. I think this makes strictly sense
     just in case all values are positive.
     """
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,**kwargs)
         # Now the boolean mask, which is important for backpropagation
         self.bool_mask = np.zeros(X_shape)
     
@@ -204,10 +246,8 @@ class norm_layer(neurons):
         """
         self.max = np.max(self.X,axis = -1)[...,None]
         self.bool_mask = (self.X == self.max).astype(np.int)
-        return np.divide(
-                    self.X,
-                    self.max
-                    )
+        self.out = np.divide( self.X, self.max )
+        return self.out
     
     def backward(self):
         # This implementation is not correct, as we should take into account the compound derivative
@@ -225,6 +265,31 @@ class norm_layer(neurons):
 #                - self.bool_mask / np.power(self.max,2) * (self.X * self.dout * (1-self.bool_mask))
         # This returns the same as the one above exept for the maximum
         return ( self.dout / self.max ) * ((1 - self.bool_mask) + self.bool_mask * (np.sum(self.out,axis = -1) - 1)[...,None])
+    
+class cent_layer(neurons):
+    """
+    This layer differs from the fullnorm_layer because it justs subtract the
+    average value of the neurons, making the values symmetric
+    """
+    def __init__(self,X_shape,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,**kwargs)
+
+    def forward(self):
+        """
+        We save the position of the maximum in the variable self.boolean mask
+        to correctly use the chain rule in the backward pass.
+        So far we're assuming that we use this layer just for fc-like inputs.
+        """
+        self.out = self.X - np.average(self.X, axis = -1)[...,None]
+        return self.out
+    
+    def backward(self):
+        """
+        The correct implementation should look something like this:
+        I will do the matrix notation later
+        """
+        return self.dout*(1-1/self.X_shape[-1])
+    
         
 class fullnorm_layer(neurons):
     """
@@ -235,8 +300,8 @@ class fullnorm_layer(neurons):
     To achieve this we simply define self.forward() as a pointer to either self.forward_conv() (for len(X_shape) == 4)
     or self.forward_fc() (for len(X_shape) == 2)
     """
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,**kwargs)
         """
         If we see that using this layer for conv-like inputs does not make sense, we'll just switch to the
         fc-like implementation.
@@ -247,24 +312,24 @@ class fullnorm_layer(neurons):
             self.forward = self.forward_fc
 
     def forward_conv(self):
-        X = self.X.astype(float)
-        X -= np.average(X.reshape(self.X_shape[0],self.X_shape[1],-1),axis = -1)[...,None,None]
-        X /= np.max(X.reshape(self.X_shape[0],self.X_shape[1],-1),axis = -1)[...,None,None]
-        return X
+        self.out = self.X.astype(float)
+        self.out -= np.average(self.out.reshape(self.X_shape[0],self.X_shape[1],-1),axis = -1)[...,None,None]
+        self.out /= np.max(self.out.reshape(self.X_shape[0],self.X_shape[1],-1),axis = -1)[...,None,None]
+        return self.out
     
     def forward_fc(self):
-        X = self.X.astype(float)
-        X -= np.average(X,axis = -1)[...,None]
-        X /= np.max(X,axis = -1)[...,None]
-        return X
+        self.out = self.X.astype(float)
+        self.out -= np.average(self.out ,axis = -1)[...,None]
+        self.out /= np.max(self.out ,axis = -1)[...,None]
+        return self.out 
     
     def backward(self):
         return self.dout
 
 
 class softmax_layer(neurons):
-    def __init__(self,X_shape):
-        neurons.__init__(self,X_shape,X_shape)
+    def __init__(self,X_shape,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,**kwargs)
         
     def forward(self):
         self.out = np.divide(
@@ -281,7 +346,7 @@ class softmax_layer(neurons):
 
 
 class fc_layer(neurons,synapses):
-    def __init__(self,X_shape,out_shape,learning_rate = 0.1):
+    def __init__(self,X_shape,out_shape,learning_rate = 0.1,**kwargs):
         # Input shape = (num. input neurons)
         # Output shape = (num. output neurons)
         # Number of images per batch = (n_images)
@@ -289,13 +354,14 @@ class fc_layer(neurons,synapses):
         out_shape = (X_shape[0],np.prod(out_shape))
         W_shape = (X_shape[-1],out_shape[-1])
         # Actual initialization
-        neurons.__init__(self,X_shape,out_shape)
+        neurons.__init__(self,X_shape,out_shape,**kwargs)
         synapses.__init__(self,W_shape,out_shape[-1],learning_rate = learning_rate)
 
     def forward(self):
         # We use the dot product to calculate the net input of every neuron,
         # and subsequently add the bias vector
-        return np.dot(self.X,self.W) + self.b
+        self.out = np.dot(self.X,self.W) + self.b
+        return self.out
 
     def backward(self):
         self.update(np.sum(np.einsum('ij,ik->ijk',self.X,self.dout),axis=0),
@@ -303,7 +369,7 @@ class fc_layer(neurons,synapses):
         return np.dot(self.dout, self.W.transpose())
 
 class conv_layer(neurons,synapses):
-    def __init__(self,X_shape,W_shape,stride=1,padding=0,learning_rate = 0.1):
+    def __init__(self,X_shape,W_shape,stride=1,padding=0,learning_rate = 0.1,**kwargs):
         # Input shape = (input depth, input height, input width)
         # Filter shape = (num. filters, filter height, filter width)
         assert(len(W_shape)==3)
@@ -321,7 +387,7 @@ class conv_layer(neurons,synapses):
         # Defining new filter shape = (num. filters, input depth, filter heights, filter width)
         W_shape = np.insert(W_shape,1,X_shape[1])
         #Applying parent init method
-        neurons.__init__(self,X_shape,out_shape)
+        neurons.__init__(self,X_shape,out_shape,**kwargs)
         synapses.__init__(self,W_shape,W_shape[0],learning_rate = learning_rate)
 
     def forward(self):
@@ -336,7 +402,8 @@ class conv_layer(neurons,synapses):
         out = out.reshape(n_filters, h_out, w_out, n_x)
         # Memorizing the last input values is useful for the backward step
         self.X_col = X_col
-        return out.transpose(3, 0, 1, 2)
+        self.out = out.transpose(3, 0, 1, 2)
+        return self.out
 
     def backward(self):
         X_shape, W, stride, padding, X_col = \
@@ -361,7 +428,7 @@ class conv_layer(neurons,synapses):
 
 class maxpool_layer(neurons):
     
-    def __init__(self,X_shape,stride=3,padding=0):
+    def __init__(self,X_shape,stride=3,padding=0,**kwargs):
         # Input shape = (input depth, input height, input width)
         # Filter shape = (stride)
         #   Additional properties for convolutional/maxpool layers
@@ -372,7 +439,7 @@ class maxpool_layer(neurons):
         assert (outdim % 1 == 0)
         outdim = int(outdim)
         out_shape = X_shape[:2]+(outdim,outdim)
-        neurons.__init__(self,X_shape,out_shape)
+        neurons.__init__(self,X_shape,out_shape,**kwargs)
         # Now the boolean mask, which is important for backpropagation
         self.bool_mask = np.zeros(X_shape)
 
@@ -383,13 +450,13 @@ class maxpool_layer(neurons):
         X = np.array(np.split(X,self.out_shape[-1],axis=-1))
         X = np.array(np.split(X,self.out_shape[-1],axis=-2))
         # Pool the maximum from correct axes and reorder
-        out = X.max(axis=(-2,-1)).transpose([2,3,0,1])
+        self.out = X.max(axis=(-2,-1)).transpose([2,3,0,1])
         # Build boolean mask for error propagation
         X = X.transpose([2,3,0,1,4,5])
-        self.bool_mask = (X == out[...,None,None]).astype(np.int)
+        self.bool_mask = (X == self.out[...,None,None]).astype(np.int)
         # If we want to reproduce the size of input layer, to be checked
 #        self.bool_mask = self.bool_mask.transpose(0,1,2,4,3,5).reshape(self.X_shape)
-        return out
+        return self.out
     
     def backward(self):
         return (self.bool_mask*self.dout[...,None,None]).transpose([0,1,2,4,3,5]).reshape(self.X_shape)
@@ -408,7 +475,7 @@ class NeuralNet(object):
     gradient between layers. The layer object are contained into the list:
     self.layers.
     '''
-    def __init__(self,lossfunc = 'MSE',**kwargs):
+    def __init__(self,**kwargs):
         """
         The following line prevents every layer to print out all the elements of 
         self.X, self.dout and self.W, which sometimes can be as many as several thousands
@@ -437,13 +504,6 @@ class NeuralNet(object):
             
             The two methods are equivalent.
         '''
-        if lossfunc == 'MSE':
-            self.error = self.error_MSE
-        elif lossfunc == 'xentropy':
-            self.error = self.error_xentropy
-        else:
-            raise ValueError ('The parameter lossfunc must be either MSE or xentropy')
-
         if kwargs:
             for key, value in kwargs.items():
                 setattr(self, key, value)
@@ -475,10 +535,8 @@ class NeuralNet(object):
         '''
         
         print('Successfully created %s as layer number %d' % (self.layers[-1].__class__.__name__, len(self.layers)))
-        print('Parameters for layer %d are: ', len(self.layers))
-        for key,value in self.layers[-1].__dict__.items():
-            print('%s = ' % key)
-            print(value)
+        print('Layer %d is a' % len(self.layers), end = ' ')
+        print(self.layers[-1])
 
     def remove_layer(self, indexes):
         for i in indexes:
@@ -509,7 +567,8 @@ class NeuralNet(object):
         
     def train(self,training_set):
         '''
-        Here comes the fun part
+        In this part we handle the data flow between the layers, generate the output error
+        calculate the cost function and check the gradients (in debug mode)
         '''
         '''
         Additional, maybe unnecessary, information
@@ -518,14 +577,22 @@ class NeuralNet(object):
         self.batch_size = self.input_layer.X_shape[0]
         self.output_layer = self.layers[-1]
         self.num_classes = self.output_layer.out_shape[-1]
+        
         # Initializing and checking some variables
         samples = 0
         correct = 0
-        assert (len(training_set) % self.batch_size == 0)
+
+        if len(training_set) % self.batch_size:
+            raise ValueError('The size of the training set must be evenly divisible by the batch size!')
+
         # Creating batches (don't know how it will work when batch_size = 1)
         batches = [training_set[i:i + self.batch_size] for i in range(0, len(training_set), self.batch_size)]
         # Actual computation
         for i in batches:
+            """
+            Remember that every batch is a list of tuples with this structure:
+                [( label, image )[0],( label, image )[1],( label, image )[2],...]
+            """
             labels, i = zip(*i)
             labels = np.array(labels)
             i = np.array(i)
@@ -539,11 +606,13 @@ class NeuralNet(object):
             samples += self.batch_size
             correct += np.sum(labels == np.argmax(i,axis = -1))
             # Computing output error
-#            print(self.gen_gtruth(labels))
-#            print(i)
+            gtruth = self.gen_gtruth(labels)
             
-            i = self.error(i,labels)
-#            print('Cost Function = %f' % self.loss, end = '\r')
+            """
+            The following part of the code can be made faster, but we will not
+            worry too much as far as it kinda works
+            """
+            i = j.error(gtruth)
 
             for j in reversed(self.layers):
                 j.loaderrors(i)
@@ -564,18 +633,4 @@ class NeuralNet(object):
         gtruth = np.zeros((self.batch_size,self.num_classes))
         gtruth[np.arange(self.batch_size),labels] = 1
         return gtruth
-
-    def error_MSE(self,out,labels):
-        dout = self.gen_gtruth(labels) - out
-        self.loss = 0.5*np.sum(np.power(dout,2)) / self.batch_size
-        return dout
-        
-    def error_xentropy(self,out,labels):
-        dout =  self.gen_gtruth(labels)*np.log(out) \
-                - (1 - self.gen_gtruth(labels))*np.log(1 - out)
-        self.loss = 0.5*np.sum(np.pow(dout,2)) / self.batch_size
-        return dout
-    
-    def gradcheck(self):
-        pass
 """END OF NEURALNET CLASS DEFINITION"""

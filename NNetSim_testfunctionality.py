@@ -178,6 +178,18 @@ jacobian = - np.einsum('ij,ik->ijk',out,out) \
 print(np.einsum('ijk,ik ->ij',jacobian,dout))
 """END OF TEST METHOD FOR SOFTMAX LAYER"""
 
+"""START OF CODE FOR GRADIENT CHECK"""
+X_shape = (7,10)
+out_shape = (1)
+
+X = np.random.randn(*X_shape)
+gtruth = 1
+
+x = nnet.fc_layer(X_shape,out_shape)
+x.__dict__
+
+"""END OF CODE FOR GRADIENT CHECK"""
+
 
 """TEST METHOD FOR WHOLE NETWORK"""
 #
