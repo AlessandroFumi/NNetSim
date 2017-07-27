@@ -56,7 +56,7 @@ def col2im_indices(cols, x_shape, field_height=3, field_width=3, padding=1,
 """ END OF BASIC BUILDING BLOCKS OF EVERY LAYER """
 class neurons(object):
 
-    def __init__(self,X_shape,out_shape,lossfunc = 'MSE',slope = 0.1):
+    def __init__(self,X_shape,out_shape,lossfunc = 'MSE',slope = 1):
         """
         This line defines the expected length of respectively len(X_shape) and len(out_shape).
         So far we expect either conv-like layers (with len(shape) == 4) or fc-like layers
@@ -113,6 +113,20 @@ class neurons(object):
         Look at self.loadvalues(self,X) documentation
         """
         self.dout = dout.reshape(self.out_shape)
+        
+    def forward(self):
+        """
+        The methods forward and backward will be implemented according to the
+        kind of layer that we're considering
+        """
+        print('Forward pass is doing nothing')
+    
+    def backward(self):
+        """
+        The methods forward and backward will be implemented according to the
+        kind of layer that we're considering
+        """
+        print('Backward pass is doing nothing')
 
     def pad(self):
         """
@@ -126,7 +140,7 @@ class neurons(object):
         self.X.fill(0)
         self.out.fill(0)
         self.dout.fill(0)
-        
+
     """
     I decided to puy the error calculation method in the layer, so that we can obtain
     the error for every layer
@@ -148,8 +162,16 @@ class neurons(object):
         return self.dout
     
     def gradcheck(self):
-        pass
-    
+        """
+        Definition of the test values that will be used later
+        """
+        X = np.zeros(self.X_shape).ravel()
+        X[0] = 1
+        gtruth = np.zeros(self.out_shape).ravel()
+        gtruth
+        self.loadvalues(X)
+        out = self.forward()
+        dout = self.error(self, gtruth)
 
 class synapses(object):
     
@@ -180,29 +202,26 @@ class synapses(object):
 
 """LAYER CLASSES DEFINITION"""
 class ReLU_layer(neurons):
-    def __init__(self,X_shape,**kwargs):
-        neurons.__init__(self,X_shape,X_shape,**kwargs)
+    """
+    We will distinguish between symmetric and asymmetric activation functions.
+    The ReLU and the logistic will probably be the only asymmetric ones
+    """
+    def __init__(self,X_shape,slope = 1,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,slope = slope,**kwargs)
         
     def forward(self):
-        self.out = self.X.clip(min=0)
+        self.out = (self.slope*self.X).clip(min=0)
         return 
     
     def backward(self):
         return np.multiply(self.dout,(self.X > 0.0).astype(np.float))
 
-class PWL_layer(neurons):
-    def __init__(self,X_shape,**kwargs):
-        neurons.__init__(self,X_shape,X_shape,**kwargs)
-        
-    def forward(self):
-        self.out = self.X.clip(min=0,max=1)
-        return  self.out
-    
-    def backward(self):
-        return np.multiply(self.dout,(np.logical_and(self.X > 0.0, self.X < 1.0) ).astype(np.float))
-
 class sigmoid_layer(neurons):
-    def __init__(self,X_shape,slope = 0.1,**kwargs):
+    """
+    We will distinguish between symmetric and asymmetric activation functions.
+    The ReLU and the logistic will probably be the only asymmetric ones
+    """
+    def __init__(self,X_shape,slope = 1,**kwargs):
         neurons.__init__(self,X_shape,X_shape,slope = slope,**kwargs)
         
     def forward(self):
@@ -216,56 +235,28 @@ class sigmoid_layer(neurons):
     def backward(self):
         return np.multiply(self.dout,self.out * (1 - self.out))
 
+class PWL_layer(neurons):
+    def __init__(self,X_shape,slope = 1,**kwargs):
+        neurons.__init__(self,X_shape,X_shape,slope = slope,**kwargs)
+        
+    def forward(self):
+        self.out = (self.slope*self.X).clip(min=-1,max=1)
+        return  self.out
+    
+    def backward(self):
+        return np.multiply(self.dout,(np.logical_and(self.X > -1.0, self.X < 1.0) ).astype(np.float))
+
 class tanh_layer(neurons):
-    def __init__(self,X_shape,slope = 0.01,**kwargs):
+    def __init__(self,X_shape,slope = 1,**kwargs):
         neurons.__init__(self,X_shape,X_shape, slope = slope,**kwargs)
         
     def forward(self):
-        self.out = 0.5*np.tanh(self.slope*self.X) + 0.5
+        self.out = np.tanh(self.slope*self.X)
         return self.out
     
     def backward(self):
         return np.multiply(self.dout,(1 - np.power(self.out,2)))
 
-class norm_layer(neurons):
-    """
-    This layer differs from the fullnorm_layer because it justs scale the
-    values with respect to the highest one. I think this makes strictly sense
-    just in case all values are positive.
-    """
-    def __init__(self,X_shape,**kwargs):
-        neurons.__init__(self,X_shape,X_shape,**kwargs)
-        # Now the boolean mask, which is important for backpropagation
-        self.bool_mask = np.zeros(X_shape)
-    
-    def forward(self):
-        """
-        We save the position of the maximum in the variable self.boolean mask
-        to correctly use the chain rule in the backward pass.
-        So far we're assuming that we use this layer just for fc-like inputs.
-        """
-        self.max = np.max(self.X,axis = -1)[...,None]
-        self.bool_mask = (self.X == self.max).astype(np.int)
-        self.out = np.divide( self.X, self.max )
-        return self.out
-    
-    def backward(self):
-        # This implementation is not correct, as we should take into account the compound derivative
-        # but this layer is supposed to be used just as input, so the backward is not important
-#        return np.divide(
-#                        self.dout,
-#                        np.max(self.X,axis = -1)[...,None]
-#                        )
-        """
-        The correct implementation should look something like this:
-        I will do the matrix notation later
-        """
-        # This thing returns 0 error for the maximum
-#        return ((1 - self.bool_mask) * self.dout) / self.max \
-#                - self.bool_mask / np.power(self.max,2) * (self.X * self.dout * (1-self.bool_mask))
-        # This returns the same as the one above exept for the maximum
-        return ( self.dout / self.max ) * ((1 - self.bool_mask) + self.bool_mask * (np.sum(self.out,axis = -1) - 1)[...,None])
-    
 class cent_layer(neurons):
     """
     This layer differs from the fullnorm_layer because it justs subtract the
@@ -419,9 +410,9 @@ class conv_layer(neurons,synapses):
         # Weight update
         self.update(dW.reshape(self.W_shape),db.reshape(n_filter))
         # I don't know if flipping the weights it's correct
-        W = np.flip(W,axis=-1)
-        W = np.flip(W,axis=-2)
-        W = W.reshape(n_filter, -1)
+#        W = np.flip(W,axis=-1)
+#        W = np.flip(W,axis=-2)
+#        W = W.reshape(n_filter, -1)
 
         dX_col = W.T @ dout_reshaped
         return col2im_indices(dX_col, X_shape, h_filter, w_filter, padding=padding, stride=stride)

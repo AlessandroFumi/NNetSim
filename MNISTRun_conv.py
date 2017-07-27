@@ -23,9 +23,8 @@ x = nnet.NeuralNet()
 """
 We add the layers one by one
 """
-x.add_layer(nnet.norm_layer, X_shape = (len(full_set),784))
-x.add_layer(nnet.fc_layer, out_shape = (10), learning_rate = 10)
-x.add_layer(nnet.cent_layer)
+x.add_layer(nnet.norm_layer, X_shape = (10,784))
+x.add_layer(nnet.fc_layer,  out_shape = (10), learning_rate = 10)
 x.add_layer(nnet.sigmoid_layer, slope = 0.1)
 
 for i in range(numEpochs):
@@ -34,6 +33,9 @@ for i in range(numEpochs):
     np.random.shuffle(full_set)
     print()
 
+for i in x.layers:
+    print(i.out_shape)
+        
 for i in x.layers:
     if issubclass(i.__class__,nnet.synapses):
         print(np.max(np.abs(i.W.ravel())))
