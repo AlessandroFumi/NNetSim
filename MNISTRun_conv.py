@@ -10,8 +10,9 @@ import mnist
 
 full_set = [i for i in mnist.read_mnist('training')]
 np.random.shuffle(full_set)
-full_set = full_set[:5000]
+full_set = full_set[:10000]
 numEpochs = 10
+batch_size = 1
 # Extracting labels and images, assuming that the training set is a list of tuples
 
 test_set = [i for i in mnist.read_mnist('testing')]
@@ -23,9 +24,13 @@ x = nnet.NeuralNet()
 """
 We add the layers one by one
 """
-x.add_layer(nnet.norm_layer, X_shape = (10,784))
-x.add_layer(nnet.fc_layer,  out_shape = (10), learning_rate = 10)
-x.add_layer(nnet.sigmoid_layer, slope = 0.1)
+x.add_layer(nnet.fullnorm_layer, X_shape = (batch_size,784))
+#x.add_layer(nnet.fc_layer,  out_shape = (250), learning_rate = 5)
+#x.add_layer(nnet.sigmoid_layer,slope=0.1)
+#x.add_layer(nnet.fc_layer,  out_shape = (125), learning_rate = 2)
+#x.add_layer(nnet.sigmoid_layer,slope=0.1)
+x.add_layer(nnet.fc_layer,  out_shape = (10), learning_rate = 1)
+x.add_layer(nnet.sigmoid_layer,slope=0.1)
 
 for i in range(numEpochs):
     print('Training Epoch {}:'.format(int(i+1)))
@@ -39,3 +44,5 @@ for i in x.layers:
 for i in x.layers:
     if issubclass(i.__class__,nnet.synapses):
         print(np.max(np.abs(i.W.ravel())))
+        
+x.test(test_set)

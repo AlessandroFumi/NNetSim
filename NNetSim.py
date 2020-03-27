@@ -611,6 +611,57 @@ class NeuralNet(object):
             
         #Print
         print('Accuracy = {:3.2f}\r'.format(float(correct*100/samples)))
+
+    def test(self,test_set):
+        '''
+        In this part we handle the data flow between the layers, generate the output error
+        '''
+        '''
+        Additional, maybe unnecessary, information
+        '''
+        self.input_layer= self.layers[0]
+        self.batch_size = self.input_layer.X_shape[0]
+        self.output_layer = self.layers[-1]
+        self.num_classes = self.output_layer.out_shape[-1]
+        
+        # Initializing and checking some variables
+        samples = 0
+        correct = 0
+
+        if len(test_set) % self.batch_size:
+            raise ValueError('The size of the training set must be evenly divisible by the batch size!')
+
+        # Creating batches (don't know how it will work when batch_size = 1)
+        batches = [test_set[i:i + self.batch_size] for i in range(0, len(test_set), self.batch_size)]
+        # Actual computation
+        for i in batches:
+            """
+            Remember that every batch is a list of tuples with this structure:
+                [( label, image )[0],( label, image )[1],( label, image )[2],...]
+            """
+            labels, i = zip(*i)
+            labels = np.array(labels)
+            i = np.array(i)
+            
+            for j in self.layers:
+                j.loadvalues(i)
+                i = j.forward()
+
+            # Checking correctness: checking argmax of last neurons vs number of classes
+            # and then summing all the times our neurons were correct
+            samples += self.batch_size
+            correct += np.sum(labels == np.argmax(i,axis = -1))
+            # Computing output error
+            gtruth = self.gen_gtruth(labels)
+            
+            """
+            The following part of the code can be made faster, but we will not
+            worry too much as far as it kinda works
+            """
+            i = j.error(gtruth)
+        #Print
+        print('Testing:')
+        print('Accuracy = {:3.2f}\r'.format(float(correct*100/samples)))
             
     def gen_gtruth(self,labels):
         '''
